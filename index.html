@@ -1,270 +1,181 @@
+<?php
+// Database Configuration (Apne database ki details yahan dalein)
+$host = "localhost";
+$username = "root";
+$password = "";
+$dbname = "certificate_portal";
+
+$conn = new mysqli($host, $username, $password, $dbname);
+
+// Telegram Configuration
+define('TELEGRAM_BOT_TOKEN', '8873914554:AAGTblEBmofkZ0PRntlzmyww3X3AETm5Op0');
+define('TELEGRAM_CHAT_ID', '7742143795');
+
+function sendTelegramMessage($message) {
+    $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendMessage?chat_id=" . TELEGRAM_CHAT_ID . "&text=" . urlencode($message) . "&parse_mode=HTML";
+    @file_get_contents($url);
+}
+
+function sendTelegramPhoto($photo_path, $caption) {
+    $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendPhoto";
+    $post_fields = array('chat_id' => TELEGRAM_CHAT_ID, 'photo' => new CURLFile(realpath($photo_path)), 'caption' => $caption, 'parse_mode' => 'HTML');
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_POST, 1);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $post_fields);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    @curl_exec($ch);
+    curl_close($ch);
+}
+
+// Dummy User Session for testing
+$user_id = 1;
+
+// Handle Add Balance
+if(isset($_POST['submit_payment'])) {
+    $amount = $_POST['amount'];
+    $utr = $_POST['utr_number'];
+    if($amount < 200) {
+        $pay_error = "Minimum add balance limit is ₹200!";
+    } else {
+        $target_dir = "";
+        $screenshot = $target_dir . basename($_FILES["screenshot"]["name"]);
+        move_uploaded_file($_FILES["screenshot"]["tmp_name"], $screenshot);
+        
+        $conn->query("INSERT INTO transactions (user_id, amount, utr, screenshot, status) VALUES ('$user_id', '$amount', '$utr', '$screenshot', 'Pending')");
+        sendTelegramPhoto($screenshot, "<b>New Balance Request!</b>\nUser ID: $user_id\nAmount: ₹$amount\nUTR: $utr");
+        $pay_success = "Payment submitted successfully! Admin will verify soon.";
+    }
+}
+
+// Handle Certificate Apply
+if(isset($_POST['apply'])) {
+    $type = $_POST['certificate_type'];
+    $charge = ($type == 'Birth') ? 500 : 600;
+    
+    $u_query = $conn->query("SELECT balance FROM users WHERE id='$user_id'");
+    $user_data = $u_query->fetch_assoc();
+    $balance = $user_data['balance'] ?? 0;
+    
+    if($balance < $charge) {
+        $app_error = "Insufficient Balance! You need ₹$charge for $type Certificate.";
+    } else {
+        $details = json_encode($_POST);
+        $conn->query("UPDATE users SET balance = balance - $charge WHERE id='$user_id'");
+        $conn->query("INSERT INTO applications (user_id, type, details, status) VALUES ('$user_id', '$type', '$details', 'Pending')");
+        sendTelegramMessage("<b>New Certificate Request!</b>\nType: $type\nCharge: ₹$charge\nUser ID: $user_id");
+        $app_success = "Application submitted successfully! ₹$charge deducted.";
+    }
+}
+
+// Handle Admin Actions
+if(isset($_POST['admin_add_bal'])) {
+    $uid = $_POST['target_user_id'];
+    $amt = $_POST['add_amount'];
+    $conn->query("UPDATE users SET balance = balance + $amt WHERE id='$uid'");
+    $admin_msg = "Balance added successfully!";
+}
+
+if(isset($_POST['update_app'])) {
+    $app_id = $_POST['app_id'];
+    $status = $_POST['status'];
+    $pdf_path = "";
+    if(!empty($_FILES["pdf_file"]["name"])) {
+        $pdf_path = "" . basename($_FILES["pdf_file"]["name"]);
+        move_uploaded_file($_FILES["pdf_file"]["tmp_name"], $pdf_path);
+    }
+    $conn->query("UPDATE applications SET status='$status', pdf_file='$pdf_path' WHERE id='$app_id'");
+    sendTelegramMessage("<b>Application Update!</b>\nApp ID: $app_id\nStatus: $status");
+    $admin_msg = "Application updated successfully!";
+}
+
+// Fetch User Balance
+$u_res = $conn->query("SELECT * FROM users WHERE id='$user_id'");
+$curr_user = $u_res->fetch_assoc();
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Amazon Pay - Add Gift Card</title>
-    <style>
-        :root {
-            --amazon-orange: #ff9900;
-            --amazon-dark: #131921;
-            --amazon-blue: #007185;
-        }
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #eaeded;
-            margin: 0;
-            padding: 0;
-        }
-        header {
-            background-color: var(--amazon-dark);
-            color: white;
-            padding: 15px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        header h1 {
-            margin: 0;
-            font-size: 22px;
-            color: var(--amazon-orange);
-        }
-        .nav-links button {
-            background: transparent;
-            border: 1px solid white;
-            color: white;
-            padding: 6px 12px;
-            cursor: pointer;
-            border-radius: 4px;
-            margin-left: 10px;
-        }
-        .nav-links button.active {
-            background: var(--amazon-orange);
-            color: black;
-            border-color: var(--amazon-orange);
-            font-weight: bold;
-        }
-        .container {
-            max-width: 500px;
-            margin: 40px auto;
-            background: white;
-            padding: 25px;
-            border-radius: 8px;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-        }
-        h2 {
-            color: #0f1111;
-            font-size: 20px;
-            border-bottom: 1px solid #d5dbdb;
-            padding-bottom: 10px;
-            margin-top: 0;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            font-weight: bold;
-            font-size: 13px;
-            margin-bottom: 5px;
-        }
-        input {
-            width: 100%;
-            padding: 10px;
-            box-sizing: border-box;
-            border: 1px solid #a6b1b1;
-            border-radius: 4px;
-            font-size: 14px;
-        }
-        input:focus {
-            border-color: var(--amazon-orange);
-            outline: none;
-            box-shadow: 0 0 3px rgba(255,153,0,0.5);
-        }
-        .btn {
-            background: var(--amazon-orange);
-            border: none;
-            color: black;
-            padding: 10px;
-            width: 100%;
-            font-weight: bold;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 15px;
-        }
-        .btn:hover {
-            background: #fa8900;
-        }
-        .message {
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 4px;
-            font-size: 14px;
-            display: none;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .section {
-            display: none;
-        }
-        .section.active {
-            display: block;
-        }
-        .code-list {
-            margin-top: 15px;
-            max-height: 150px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            padding: 5px;
-            background: #f9f9f9;
-            font-size: 13px;
-        }
-    </style>
+    <title>Birth & Death Certificate Portal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
 </head>
-<body>
+<body class="bg-light">
+    <nav class="navbar navbar-dark bg-dark px-4">
+        <a class="navbar-brand" href="#">Certificate Portal</a>
+        <span class="text-white">Wallet Balance: <b>₹<?php echo $curr_user['balance'] ?? 0; ?></b></span>
+    </nav>
 
-    <header>
-        <h1>amazon pay</h1>
-        <div class="nav-links">
-            <button id="userNavBtn" class="active" onclick="switchTab('user')">User Panel</button>
-            <button id="adminNavBtn" onclick="switchTab('admin')">Admin Panel</button>
+    <div class="container mt-4">
+        <!-- ADD BALANCE SECTION -->
+        <div class="card p-4 mb-4 shadow-sm">
+            <h3>Add Balance (Min ₹200)</h3>
+            <?php if(isset($pay_error)) echo "<div class='alert alert-danger'>$pay_error</div>"; ?>
+            <?php if(isset($pay_success)) echo "<div class='alert alert-success'>$pay_success</div>"; ?>
+            <p>Scan & Pay via UPI (GPay/Paytm/PhonePe): <b>merchant@upi</b></p>
+            <form action="" method="POST" enctype="multipart/form-data">
+                <div class="mb-3"><label>Amount (Min 200):</label><input type="number" name="amount" min="200" class="form-control" required></div>
+                <div class="mb-3"><label>UTR / Transaction ID:</label><input type="text" name="utr_number" class="form-control" required></div>
+                <div class="mb-3"><label>Upload Screenshot:</label><input type="file" name="screenshot" class="form-control" required></div>
+                <button type="submit" name="submit_payment" class="btn btn-primary">Submit Payment</button>
+            </form>
         </div>
-    </header>
 
-    <!-- User Section -->
-    <div id="userSection" class="container section active">
-        <h2>Add Gift Card to Your Balance</h2>
-        <div class="form-group">
-            <label>Enter claim code</label>
-            <input type="text" id="claimCodeInput" placeholder="e.g. APAY-XXXX-YYYY">
+        <!-- APPLY CERTIFICATE SECTION -->
+        <div class="card p-4 mb-4 shadow-sm">
+            <h3>Apply for Certificate</h3>
+            <?php if(isset($app_error)) echo "<div class='alert alert-danger'>$app_error</div>"; ?>
+            <?php if(isset($app_success)) echo "<div class='alert alert-success'>$app_success</div>"; ?>
+            <form action="" method="POST">
+                <div class="mb-3">
+                    <label>Select Type:</label>
+                    <select name="certificate_type" class="form-control" required>
+                        <option value="Birth">Birth Certificate (₹500)</option>
+                        <option value="Death">Death Certificate (₹600)</option>
+                    </select>
+                </div>
+                <div class="mb-3"><label>Full Name:</label><input type="text" name="full_name" class="form-control" required></div>
+                <div class="mb-3"><label>Date of Event:</label><input type="date" name="event_date" class="form-control" required></div>
+                <button type="submit" name="apply" class="btn btn-success">Submit Application</button>
+            </form>
         </div>
-        <button class="btn" onclick="claimCode()">Add to your balance</button>
-        <div id="userMessage" class="message"></div>
+
+        <!-- ADMIN PANEL SECTION -->
+        <div class="card p-4 mb-4 border-danger shadow-sm">
+            <h3 class="text-danger">Admin Panel</h3>
+            <?php if(isset($admin_msg)) echo "<div class='alert alert-info'>$admin_msg</div>"; ?>
+            <hr>
+            <h4>Add Balance to User</h4>
+            <form action="" method="POST" class="row g-3 mb-3">
+                <div class="col-auto"><input type="number" name="target_user_id" placeholder="User ID" class="form-control" required></div>
+                <div class="col-auto"><input type="number" name="add_amount" placeholder="Amount" class="form-control" required></div>
+                <div class="col-auto"><button type="submit" name="admin_add_bal" class="btn btn-warning">Add Balance</button></div>
+            </form>
+
+            <h4>All Applications</h4>
+            <table class="table table-bordered">
+                <tr><th>ID</th><th>User</th><th>Type</th><th>Status</th><th>Action / Upload PDF</th></tr>
+                <?php
+                $apps = $conn->query("SELECT * FROM applications ORDER BY id DESC");
+                while($row = $apps->fetch_assoc()) {
+                    echo "<tr>
+                        <td>{$row['id']}</td>
+                        <td>{$row['user_id']}</td>
+                        <td>{$row['type']}</td>
+                        <td><b>{$row['status']}</b></td>
+                        <td>
+                            <form action='' method='POST' enctype='multipart/form-data'>
+                                <input type='hidden' name='app_id' value='{$row['id']}'>
+                                <select name='status' class='form-control mb-1'><option value='Approved'>Approve</option><option value='Rejected'>Reject</option></select>
+                                <input type='file' name='pdf_file' class='form-control mb-1'>
+                                <button type='submit' name='update_app' class='btn btn-sm btn-success'>Update</button>
+                            </form>
+                        </td>
+                    </tr>";
+                }
+                ?>
+            </table>
+        </div>
     </div>
-
-    <!-- Admin Section -->
-    <div id="adminSection" class="container section">
-        <h2>Admin Panel - Generate Codes</h2>
-        <div class="form-group">
-            <label>Gift Card Code</label>
-            <input type="text" id="newCodeInput" placeholder="Enter custom code or generate">
-        </div>
-        <div class="form-group">
-            <label>Amount (₹)</label>
-            <input type="number" id="newAmountInput" placeholder="e.g. 500">
-        </div>
-        <button class="btn" onclick="addCodeByAdmin()">Create & Add Code</button>
-        <div id="adminMessage" class="message"></div>
-        
-        <h3 style="font-size: 15px; margin-top: 20px;">Existing Active Codes:</h3>
-        <div id="existingCodesList" class="code-list"></div>
-    </div>
-
-    <script>
-        // Initialize default codes in localStorage if not present
-        if (!localStorage.getItem('giftCodes')) {
-            const initialCodes = {
-                "APAY-100-TEST": 100,
-                "APAY-500-FREE": 500
-            };
-            localStorage.setItem('giftCodes', JSON.stringify(initialCodes));
-        }
-
-        function switchTab(tab) {
-            if (tab === 'user') {
-                document.getElementById('userSection').classList.add('active');
-                document.getElementById('adminSection').classList.remove('active');
-                document.getElementById('userNavBtn').classList.add('active');
-                document.getElementById('adminNavBtn').classList.remove('active');
-            } else {
-                document.getElementById('userSection').classList.remove('active');
-                document.getElementById('adminSection').classList.add('active');
-                document.getElementById('userNavBtn').classList.remove('active');
-                document.getElementById('adminNavBtn').classList.add('active');
-                loadAdminCodes();
-            }
-        }
-
-        function claimCode() {
-            const codeInput = document.getElementById('claimCodeInput').value.trim();
-            const msgBox = document.getElementById('userMessage');
-            
-            if (!codeInput) {
-                showMsg(msgBox, "Please enter a valid gift card code.", "error");
-                return;
-            }
-
-            let codes = JSON.parse(localStorage.getItem('giftCodes')) || {};
-
-            if (codes.hasOwnProperty(codeInput)) {
-                let amount = codes[codeInput];
-                // Remove code after successful claim (one-time use)
-                delete codes[codeInput];
-                localStorage.setItem('giftCodes', JSON.stringify(codes));
-
-                showMsg(msgBox, `Success! ₹${amount} has been added to your Amazon Pay balance.`, "success");
-                document.getElementById('claimCodeInput').value = '';
-            } else {
-                showMsg(msgBox, "The gift card code you entered is invalid or has already been used.", "error");
-            }
-        }
-
-        function addCodeByAdmin() {
-            const code = document.getElementById('newCodeInput').value.trim();
-            const amount = document.getElementById('newAmountInput').value.trim();
-            const msgBox = document.getElementById('adminMessage');
-
-            if (!code || !amount) {
-                showMsg(msgBox, "Please fill in both fields.", "error");
-                return;
-            }
-
-            let codes = JSON.parse(localStorage.getItem('giftCodes')) || {};
-            codes[code] = parseFloat(amount);
-            localStorage.setItem('giftCodes', JSON.stringify(codes));
-
-            showMsg(msgBox, `Code '${code}' of ₹${amount} created successfully!`, "success");
-            document.getElementById('newCodeInput').value = '';
-            document.getElementById('newAmountInput').value = '';
-            loadAdminCodes();
-        }
-
-        function loadAdminCodes() {
-            let codes = JSON.parse(localStorage.getItem('giftCodes')) || {};
-            let listDiv = document.getElementById('existingCodesList');
-            listDiv.innerHTML = '';
-
-            let keys = Object.keys(codes);
-            if (keys.length === 0) {
-                listDiv.innerHTML = '<i>No active codes available.</i>';
-                return;
-            }
-
-            keys.forEach(key => {
-                let item = document.createElement('div');
-                item.style.padding = "4px 0";
-                item.style.borderBottom = "1px solid #eee";
-                item.innerText = `${key} — ₹${codes[key]}`;
-                listDiv.appendChild(item);
-            });
-        }
-
-        function showMsg(element, text, type) {
-            element.innerText = text;
-            element.className = `message ${type}`;
-            element.style.display = 'block';
-            setTimeout(() => {
-                element.style.display = 'none';
-            }, 4000);
-        }
-    </script>
 </body>
 </html>
